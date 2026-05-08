@@ -43,7 +43,7 @@ st.title("Walmart Multi-Series Forecasting Dashboard")
 st.markdown("""
 This dashboard compares:
 
-- Exponential Smoothing
+- Single Exponential Smoothing
 - ARIMA
 - Random Forest
 
@@ -377,76 +377,42 @@ forecast_table = pd.DataFrame({
 
 st.subheader("Residual Diagnostics")
 
-# ARIMA residuals (always shown if ARIMA selected)
+# ARIMA residuals (show histogram only if selected)
 if 'ARIMA' in selected_models:
     residuals = arima_model.resid
 
-    fig, ax = plt.subplots(figsize=(14,4))
-    ax.plot(residuals)
-    ax.set_title("ARIMA Residuals")
-    st.pyplot(fig)
-
     fig, ax = plt.subplots(figsize=(8,4))
-    ax.hist(residuals, bins=25)
+    ax.hist(residuals.dropna(), bins=25)
     ax.set_title("ARIMA Residual Distribution")
     st.pyplot(fig)
 
-    fig, ax = plt.subplots(figsize=(10,4))
-    plot_acf(residuals, ax=ax)
-    st.pyplot(fig)
-
-# ETS residuals
+# ETS residuals (histogram only)
 if 'ETS' in selected_models:
     try:
         residuals_ets = actual - ets_forecast
     except Exception:
         residuals_ets = pd.Series([np.nan]*len(actual), index=actual.index)
 
-    fig, ax = plt.subplots(figsize=(14,4))
-    ax.plot(residuals_ets)
-    ax.set_title("ETS Residuals")
-    st.pyplot(fig)
-
     fig, ax = plt.subplots(figsize=(8,4))
     ax.hist(residuals_ets.dropna(), bins=25)
-    ax.set_title("ETS Residual Distribution")
+    ax.set_title("ETS Resid Distribution")
     st.pyplot(fig)
 
-    # ACF for ETS residuals
-    try:
-        fig, ax = plt.subplots(figsize=(10,4))
-        plot_acf(residuals_ets.dropna(), ax=ax)
-        st.pyplot(fig)
-    except Exception:
-        pass
-
-# Random Forest residuals
+# Random Forest residuals (histogram only)
 if 'Random Forest' in selected_models:
     try:
         residuals_rf = actual - rf_predictions
     except Exception:
         residuals_rf = pd.Series([np.nan]*len(actual), index=actual.index)
 
-    fig, ax = plt.subplots(figsize=(14,4))
-    ax.plot(residuals_rf)
-    ax.set_title("Random Forest Residuals")
-    st.pyplot(fig)
-
     fig, ax = plt.subplots(figsize=(8,4))
     ax.hist(residuals_rf.dropna(), bins=25)
-    ax.set_title("Random Forest Residual Distribution")
+    ax.set_title("Random Forest Resid Distribution")
     st.pyplot(fig)
-
-    try:
-        fig, ax = plt.subplots(figsize=(10,4))
-        plot_acf(residuals_rf.dropna(), ax=ax)
-        st.pyplot(fig)
-    except Exception:
-        pass
 
 
 # ============================================================
-# FEATURE IMPORTANCE
+# FEATURE IMPORTANCE (table only; plot removed)
 # ============================================================
 
 st.subheader("Random Forest Feature Importance")
@@ -459,11 +425,6 @@ importance_df = pd.DataFrame({
 importance_df = importance_df.sort_values(by='Importance', ascending=False)
 
 st.dataframe(importance_df)
-
-fig, ax = plt.subplots(figsize=(10,5))
-ax.bar(importance_df['Feature'], importance_df['Importance'])
-ax.set_title("Feature Importance")
-st.pyplot(fig)
 
 
 # ============================================================
@@ -480,3 +441,4 @@ st.download_button(
     file_name='forecast_results.csv',
     mime='text/csv',
 )
+
