@@ -92,6 +92,18 @@ selected_depts = st.sidebar.multiselect(
     default=[1, 2, 3],
 )
 
+# Model selector (allow one or multiple)
+model_options = ["ETS", "ARIMA", "Random Forest"]
+selected_models = st.sidebar.multiselect(
+    "Models to show",
+    options=model_options,
+    default=model_options,
+)
+
+if len(selected_models) == 0:
+    st.sidebar.warning("Select at least one model to display")
+
+
 target_series = st.sidebar.selectbox(
     "Select Target Series",
     options=["Total_Sales"] + [f"Dept_{d}" for d in selected_depts],
@@ -135,27 +147,6 @@ st.dataframe(sales_pivot.head())
 
 
 # ============================================================
-# HISTORICAL SERIES PLOT
-# ============================================================
-
-st.subheader("Historical Sales")
-
-fig, ax = plt.subplots(figsize=(14,6))
-
-ax.plot(
-    sales_pivot.index,
-    sales_pivot[target_series],
-    label=target_series,
-)
-
-ax.set_title(f"{target_series} Historical Sales")
-ax.set_ylabel("Sales")
-ax.legend()
-
-st.pyplot(fig)
-
-
-# ============================================================
 # TRAIN TEST SPLIT
 # ============================================================
 
@@ -164,17 +155,25 @@ test = sales_pivot.iloc[-forecast_horizon:]
 
 
 # ============================================================
-# SINGLE EXPONENTIAL SMOOTHING
+# ETS (Simple Exponential Smoothing) - safe fit
 # ============================================================
 
 from statsmodels.tsa.holtwinters import SimpleExpSmoothing
 
-ets_model = SimpleExpSmoothing(
-    train[target_series],
-    initialization_method="estimated"
-).fit()
 
-ets_forecast = ets_model.forecast(forecast_horizon)
+def fit_ets_safe(series):
+    try:
+        model = SimpleExpSmoothing(series, initialization_method="estimated").fit()
+    except TypeError:
+        model = SimpleExpSmoothing(series).fit()
+    return model
+
+if len(train[target_series].dropna()) < 2:
+    ets_forecast = pd.Series([np.nan] * forecast_horizon, index=test.index)
+else:
+    ets_model = fit_ets_safe(train[target_series])
+    raw_ets = ets_model.forecast(forecast_horizon)
+    ets_forecast = pd.Series(np.asarray(raw_ets).ravel(), index=test.index)
 
 
 # ============================================================
@@ -268,70 +267,42 @@ history = train[target_series].copy()
 # Forecast using RF: generate features from rolling history so feature set matches training
 rf_preds = []
 for i in range(forecast_horizon):
-    # build features from the available history
     feat = build_features(history)
     if feat.empty:
         raise ValueError('Not enough history to build features for RF forecasting')
 
-    # last available feature row (drop y)
     last_row = feat.drop(columns='y').iloc[-1:]
-
-    # reindex columns to match X_train (missing columns will be filled with 0)
     last_row = last_row.reindex(columns=X_train.columns, fill_value=0)
 
     pred = rf_model.predict(last_row)[0]
     rf_preds.append(pred)
 
-    # append prediction to history for next-step feature generation
     next_index = history.index[-1] + pd.Timedelta(weeks=1)
     history.loc[next_index] = pred
 
-# convert rf predictions to a Series aligned with test index
 rf_predictions = pd.Series(rf_preds, index=test.index)
 
 
 # ============================================================
-# FORECAST PLOT
+# FORECAST PLOT (show selected models only)
 # ============================================================
 
 st.subheader("Forecast Comparison")
 
 fig, ax = plt.subplots(figsize=(15,6))
 
-ax.plot(
-    train.index,
-    train[target_series],
-    label='Train',
-)
+ax.plot(train.index, train[target_series], label='Train', color='#444444')
+ax.plot(test.index, test[target_series], label='Test', color='#222222')
 
-ax.plot(
-    test.index,
-    test[target_series],
-    label='Test',
-)
-
-ax.plot(
-    test.index,
-    ets_forecast,
-    label='ETS Forecast',
-)
-
-ax.plot(
-    test.index,
-    arima_forecast,
-    label='ARIMA Forecast',
-)
-
-ax.plot(
-    test.index,
-    rf_predictions,
-    label='RF Forecast',
-)
+if 'ETS' in selected_models:
+    ax.plot(test.index, ets_forecast, label='ETS Forecast')
+if 'ARIMA' in selected_models:
+    ax.plot(test.index, arima_forecast, label='ARIMA Forecast')
+if 'Random Forest' in selected_models:
+    ax.plot(test.index, rf_predictions, label='RF Forecast')
 
 ax.set_title(f"Forecast Comparison - {target_series}")
-
 ax.legend()
-
 st.pyplot(fig)
 
 
@@ -362,33 +333,22 @@ def wmape(y_true, y_pred):
     return np.sum(np.abs(y_true - y_pred)) / denom * 100
 
 results = pd.DataFrame({
-
     'Model': ['ETS', 'ARIMA', 'Random Forest'],
-
     'MAE': [
-
         mean_absolute_error(actual, ets_forecast),
-
         mean_absolute_error(actual, arima_forecast),
-
         mean_absolute_error(actual, rf_predictions),
     ],
-
     'RMSE': [
-
         np.sqrt(mean_squared_error(actual, ets_forecast)),
-
         np.sqrt(mean_squared_error(actual, arima_forecast)),
-
         np.sqrt(mean_squared_error(actual, rf_predictions)),
     ],
-
     'MAPE': [
         mape(actual, ets_forecast),
         mape(actual, arima_forecast),
         mape(actual, rf_predictions),
     ],
-
     'wMAPE': [
         wmape(actual, ets_forecast),
         wmape(actual, arima_forecast),
@@ -400,69 +360,89 @@ st.dataframe(results)
 
 
 # ============================================================
-# FORECAST TABLE
+# FORECAST TABLE (kept for downloads but not displayed)
 # ============================================================
 
-st.subheader("Forecast Table")
-
 forecast_table = pd.DataFrame({
-
     'Actual': actual.values,
-
     'ETS': ets_forecast.values,
-
     'ARIMA': arima_forecast.values,
-
     'RandomForest': rf_predictions.values,
-
 }, index=test.index)
-
-st.dataframe(forecast_table)
 
 
 # ============================================================
 # RESIDUAL DIAGNOSTICS
 # ============================================================
 
-st.subheader("ARIMA Residual Diagnostics")
+st.subheader("Residual Diagnostics")
 
-residuals = arima_model.resid
+# ARIMA residuals (always shown if ARIMA selected)
+if 'ARIMA' in selected_models:
+    residuals = arima_model.resid
 
+    fig, ax = plt.subplots(figsize=(14,4))
+    ax.plot(residuals)
+    ax.set_title("ARIMA Residuals")
+    st.pyplot(fig)
 
-# Residual plot
-fig, ax = plt.subplots(figsize=(14,4))
+    fig, ax = plt.subplots(figsize=(8,4))
+    ax.hist(residuals, bins=25)
+    ax.set_title("ARIMA Residual Distribution")
+    st.pyplot(fig)
 
-ax.plot(residuals)
+    fig, ax = plt.subplots(figsize=(10,4))
+    plot_acf(residuals, ax=ax)
+    st.pyplot(fig)
 
-ax.set_title("Residuals")
+# ETS residuals
+if 'ETS' in selected_models:
+    try:
+        residuals_ets = actual - ets_forecast
+    except Exception:
+        residuals_ets = pd.Series([np.nan]*len(actual), index=actual.index)
 
-st.pyplot(fig)
+    fig, ax = plt.subplots(figsize=(14,4))
+    ax.plot(residuals_ets)
+    ax.set_title("ETS Residuals")
+    st.pyplot(fig)
 
+    fig, ax = plt.subplots(figsize=(8,4))
+    ax.hist(residuals_ets.dropna(), bins=25)
+    ax.set_title("ETS Residual Distribution")
+    st.pyplot(fig)
 
-# Histogram
-fig, ax = plt.subplots(figsize=(8,4))
+    # ACF for ETS residuals
+    try:
+        fig, ax = plt.subplots(figsize=(10,4))
+        plot_acf(residuals_ets.dropna(), ax=ax)
+        st.pyplot(fig)
+    except Exception:
+        pass
 
-ax.hist(residuals, bins=25)
+# Random Forest residuals
+if 'Random Forest' in selected_models:
+    try:
+        residuals_rf = actual - rf_predictions
+    except Exception:
+        residuals_rf = pd.Series([np.nan]*len(actual), index=actual.index)
 
-ax.set_title("Residual Distribution")
+    fig, ax = plt.subplots(figsize=(14,4))
+    ax.plot(residuals_rf)
+    ax.set_title("Random Forest Residuals")
+    st.pyplot(fig)
 
-st.pyplot(fig)
+    fig, ax = plt.subplots(figsize=(8,4))
+    ax.hist(residuals_rf.dropna(), bins=25)
+    ax.set_title("Random Forest Residual Distribution")
+    st.pyplot(fig)
 
-
-# ACF
-fig, ax = plt.subplots(figsize=(10,4))
-
-plot_acf(residuals, ax=ax)
-
-st.pyplot(fig)
-
-
-# PACF
-fig, ax = plt.subplots(figsize=(10,4))
-
-plot_pacf(residuals, ax=ax)
-
-st.pyplot(fig)
+    try:
+        fig, ax = plt.subplots(figsize=(10,4))
+        plot_acf(residuals_rf.dropna(), ax=ax)
+        st.pyplot(fig)
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -472,30 +452,17 @@ st.pyplot(fig)
 st.subheader("Random Forest Feature Importance")
 
 importance_df = pd.DataFrame({
-
     'Feature': X_train.columns,
-
     'Importance': rf_model.feature_importances_
-
 })
 
-importance_df = importance_df.sort_values(
-    by='Importance',
-    ascending=False,
-)
+importance_df = importance_df.sort_values(by='Importance', ascending=False)
 
 st.dataframe(importance_df)
 
-
 fig, ax = plt.subplots(figsize=(10,5))
-
-ax.bar(
-    importance_df['Feature'],
-    importance_df['Importance']
-)
-
+ax.bar(importance_df['Feature'], importance_df['Importance'])
 ax.set_title("Feature Importance")
-
 st.pyplot(fig)
 
 
