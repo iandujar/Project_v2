@@ -38,13 +38,13 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("Walmart Multi-Series Forecasting Dashboard")
+st.title("Walmart Forecasting Dashboard")
 
 st.markdown("""
 This dashboard compares:
 
 - Single Exponential Smoothing
-- ARIMA
+- ARIMA (2,1,1)
 - Random Forest
 
 for Walmart department sales forecasting.
@@ -441,4 +441,5 @@ st.download_button(
     file_name='forecast_results.csv',
     mime='text/csv',
 )
+
 
