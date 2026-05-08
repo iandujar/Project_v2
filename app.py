@@ -171,7 +171,7 @@ from statsmodels.tsa.holtwinters import SimpleExpSmoothing
 
 ets_model = SimpleExpSmoothing(
     train[target_series],
-    initialization_method="estimated", optimized=True,
+    initialization_method="estimated"
 ).fit()
 
 ets_forecast = ets_model.forecast(forecast_horizon)
